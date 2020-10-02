@@ -1,0 +1,395 @@
+---
+title: "Python test"
+author: "Michael L. Thompson"
+date: "9/27/2020"
+output: 
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+    extra_dependencies: ["float"]
+linkcolor: red
+urlcolor: blue
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  #warning = FALSE,
+  message = FALSE,
+  fig.pos = "!H", 
+  out.extra = ""
+)
+```
+
+## Package Setup
+
+We need package `reticulate` to make all of this happen.
+
+```{r pkgs}
+library(magrittr)
+library(tidyverse)
+library(reticulate)
+
+use_condaenv("./python",required = TRUE)
+py_config()
+# matplotlib <- import("matplotlib")
+# matplotlib$use("cairo", force = TRUE)
+
+```
+
+## Using Python within an R Project in RStudio
+
+Had to install the development version of R package `reticulate`, per instructions here: ["error when using reticulate in Rmarkdown #831"](https://github.com/rstudio/reticulate/issues/831).
+
+* ["Installing and Configuring Python with RStudio"](https://support.rstudio.com/hc/en-us/articles/360023654474-Installing-and-Configuring-Python-with-RStudio)
+
+Executed these commands wthin RStudio Terminal (after installing Miniconda3 outside of RStudio):
+
+* `~/Documents/R/python_test$ conda create --prefix ./python`    
+* `~/Documents/R/python_test$ conda activate ./python`    
+* `~/Documents/R/python_test$ conda install arviz matplotlib numpy pandas pymc3`
+
+## R Markdown and Python
+
+* `reticulate` vignette: ["R Markdown Python Engine"](https://rstudio.github.io/reticulate/articles/r_markdown.html)
+
+## Getting Started with **PyMC3** within Python
+
+* ["Getting started with PyMC3"](https://docs.pymc.io/notebooks/getting_started.html)    
+    + Be sure to run a `bash` session within the RStudio Terminal pane.    
+    
+
+
+```{python,eval=FALSE,include=FALSE}
+from IPython.display import set_matplotlib_formats
+set_matplotlib_formats('retina')
+```
+
+```{python eval=FALSE,include=FALSE}
+%config InlineBackend.figure_format = 'retina'
+```
+
+
+```{python pymc3_imports}
+import arviz as az
+import matplotlib.pyplot as plt
+import numpy as np
+import pymc3 as pm
+
+print("Running on PyMC3 v{}".format(pm.__version__))
+```
+
+
+```{python pymc3_linreg1}
+# Initialize random number generator
+RANDOM_SEED = 8927
+np.random.seed(RANDOM_SEED)
+az.style.use('arviz-darkgrid')
+```
+
+```{python}
+
+# True parameter values
+alpha, sigma = 1, 1
+beta = [1, 2.5]
+
+# Size of dataset
+size = 100
+
+# Predictor variable
+X1 = np.random.randn(size)
+X2 = np.random.randn(size) * 0.2
+
+# Simulate outcome variable
+Y = alpha + beta[0] * X1 + beta[1] * X2 + np.random.randn(size) * sigma
+```
+
+### Plot the Data
+
+Let's generate scatterplots so we can get an idea of what the data look like.
+
+```{python}
+fig, axes = plt.subplots(1, 2, sharex=True, figsize=(10, 4))
+axes[0].scatter(X1, Y, alpha=0.6)
+axes[1].scatter(X2, Y, alpha=0.6)
+axes[0].set_ylabel("Y")
+axes[0].set_xlabel("X1")
+axes[1].set_xlabel("X2") #;
+
+#fig.show()
+```
+
+```{python, eval=FALSE,include=FALSE}
+fig.savefig('foo.png', bbox_inches='tight')
+print("finished")
+# add this line to markdown text: ![Scatterplots of data.](foo.png)
+```
+
+### Define the Basic Linear Regression Model
+
+```{python pymc3_linreg2}
+basic_model = pm.Model()
+
+with basic_model:
+    # Priors for unknown model parameters
+    alpha = pm.Normal("alpha", mu=0, sigma=10)
+    beta = pm.Normal("beta", mu=0, sigma=10, shape=2)
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    # Expected value of outcome
+    mu = alpha + beta[0] * X1 + beta[1] * X2
+
+    # Likelihood (sampling distribution) of observations
+    Y_obs = pm.Normal("Y_obs", mu=mu, sigma=sigma, observed=Y)
+
+```
+
+### Perform MAP Estimation
+
+```{python pymc3_map1}
+map_estimate = pm.find_MAP(model=basic_model)
+map_estimate
+```
+```{python pymc3_map2}
+map_estimate = pm.find_MAP(model=basic_model, method="powell")
+map_estimate
+```
+
+### Perform MCMC for Full Posterior Estimation
+
+```{python pymc3_hmcnuts}
+with basic_model:
+    # draw 500 posterior samples
+    trace = pm.sample(500)
+```
+```{python pymc3_post}
+trace["alpha"][-5:]
+```
+
+```{python pymc3_slicesampler}
+with basic_model:
+    # instantiate sampler
+    step = pm.Slice()
+
+    # draw 5000 posterior samples
+    trace = pm.sample(5000, step=step) #, return_inferencedata=False)
+```
+
+```{python pymc3_postviz,results='hide'}
+axes = az.plot_trace(trace) #;
+fig = axes.ravel()[0].figure
+#print(axes)
+#fig.show()
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('foo2.png', bbox_inches='tight')
+# add this line to markdown text: ![Trace plots.](foo2.png)
+```
+
+![Trace plots.](foo2.png)
+
+```{python}
+az.summary(trace, round_to=2)
+```
+
+### Convert **PyMC3** Result to **R**
+
+```{r get_py, eval=FALSE}
+pymc3_trace <- py_to_r(py_run_string("trace"))
+```
+
+## Prior and Posterior Predictive Checks
+
+From the tutorial here: ["Prior and Posterior Predictive Checks"](https://docs.pymc.io/notebooks/posterior_predictive.html)
+
+
+```{python}
+with basic_model:
+  prior_checks = pm.sample_prior_predictive(samples=50, random_seed=RANDOM_SEED)
+  
+```
+
+
+```{python prior_pred_chk, results='hide'}
+fig, axes = plt.subplots(1, 2, sharex=False, figsize=(10, 4))
+axes[0].scatter(X1, Y, alpha=0.6)
+axes[1].scatter(X2, Y, alpha=0.6)
+axes[0].set_ylabel("Y")
+axes[0].set_xlabel("X1")
+axes[1].set_xlabel("X2")
+axes[0].set_title("Prior predictive checks -- Flat Priors") 
+
+x = np.linspace(-4, 4, 50)
+
+for a, b in zip(prior_checks["alpha"], prior_checks["beta"]):
+    y1 = a + b[0] * x
+    y2 = a + b[1] * (0.2 * x)
+    axes[0].plot(x, y1, c="k",  alpha=0.3)
+    axes[1].plot(0.2 * x, y2, c="k", alpha=0.3);
+
+#fig.show()
+```
+
+```{python pymc3_linreg_wip}
+# Weakly Informative Priors
+basic_model = pm.Model()
+
+with basic_model:
+    # Priors for unknown model parameters
+    alpha = pm.Normal("alpha", mu=0, sigma=1)
+    beta = pm.Normal("beta", mu=0, sigma=1, shape=2)
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    # Expected value of outcome
+    mu = alpha + beta[0] * X1 + beta[1] * X2
+
+    # Likelihood (sampling distribution) of observations
+    Y_obs = pm.Normal("Y_obs", mu=mu, sigma=sigma, observed=Y)
+    prior_checks = pm.sample_prior_predictive(samples=50, random_seed=RANDOM_SEED)
+```
+
+```{python prior_pred_chk2, results='hide'}
+fig, axes = plt.subplots(1, 2, sharex=False, figsize=(10, 4))
+axes[0].scatter(X1, Y, alpha=0.6)
+axes[1].scatter(X2, Y, alpha=0.6)
+axes[0].set_ylabel("Y")
+axes[0].set_xlabel("X1")
+axes[1].set_xlabel("X2")
+axes[0].set_title("Prior predictive checks -- Weakly Informative Priors") 
+
+x = np.linspace(-4, 4, 50)
+
+for a, b in zip(prior_checks["alpha"], prior_checks["beta"]):
+    y1 = a + b[0] * x
+    y2 = a + b[1] * (0.2 * x)
+    axes[0].plot(x, y1, c="k",  alpha=0.3)
+    axes[1].plot(0.2 * x, y2, c="k", alpha=0.3);
+
+#fig.show()
+```
+
+```{python}
+with basic_model:
+    # draw 500 posterior samples
+    trace = pm.sample(500)
+```
+
+```{python}
+az.summary(trace, round_to=2)
+```
+
+```{python}
+with basic_model:
+    ppc = pm.sample_posterior_predictive(
+        trace, var_names=["alpha", "beta", "Y_obs"], random_seed=RANDOM_SEED
+    )
+```
+
+
+```{python}
+ppc["Y_obs"].shape
+```
+
+
+```{python pymc3_ppc,results='hide'}
+idata = az.from_pymc3(trace, posterior_predictive=ppc)
+axes = az.plot_ppc(idata)
+#print(axes)
+fig = axes.ravel()[0].figure
+```
+
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('foo3.png', bbox_inches='tight')
+# add this line to markdown text: ![PPC plots.](foo3.png)
+```
+
+![Posterior Predictive Check: Response distributions.](foo3.png)
+
+
+## Model Comparison
+
+```{python pymc3_x1_only}
+# Weakly Informative Priors
+basic_mod_x1_only = pm.Model()
+
+with basic_mod_x1_only:
+    # Priors for unknown model parameters
+    alpha = pm.Normal("alpha", mu=0, sigma=1)
+    beta = pm.Normal("beta", mu=0, sigma=1)
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    # Expected value of outcome
+    mu = alpha + beta * X1
+
+    # Likelihood (sampling distribution) of observations
+    Y_obs = pm.Normal("Y_obs", mu=mu, sigma=sigma, observed=Y)
+    prior_checks = pm.sample_prior_predictive(samples=50, random_seed=RANDOM_SEED)
+```
+
+```{python}
+with basic_mod_x1_only:
+    # draw 500 posterior samples
+    trace_only_x1 = pm.sample(500)
+```
+
+
+From tutorial ["Model comparison"](https://docs.pymc.io/notebooks/model_comparison.html).
+
+```{python}
+basic_model.name = 'both_predictors'
+basic_mod_x1_only.name = 'only_x1'
+```
+
+Coompute the LOO values.
+
+```{python}
+both_loo = pm.loo(trace, basic_model)
+
+both_loo
+```
+
+```{python}
+x1_only_loo  = pm.loo(trace_only_x1, basic_mod_x1_only)
+
+x1_only_loo
+```
+
+```{python}
+df_comp_LOO = pm.compare({basic_model: trace, basic_mod_x1_only: trace_only_x1}, ic='LOO')
+#df_comp_LOO
+```
+
+```{r}
+pymc3_df_comp_LOO <- py_run_string("df_comp_LOO") %>%
+  py_to_r() %$% df_comp_LOO %>%
+  py_to_r() %>%
+  as_tibble() %>% 
+  unnest(cols= -loo_scale)
+pymc3_df_comp_LOO
+```
+
+```{python}
+axes = pm.compareplot(df_comp_LOO);
+fig = axes.figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('foo4.png', bbox_inches='tight')
+```
+
+![Model Comparison: LOO.](foo4.png)
+
+From the tutorial:
+
+> "The empty circle represents the values of WAIC [LOO] and the black error bars associated with them are the values of the standard deviation of WAIC [LOO].
+
+> "The value of the lowest WAIC [LOO] is also indicated with a vertical dashed grey line to ease comparison with other WAIC [LOO] values.
+
+> "The filled black dots are the in-sample deviance of each model, which for WAIC is 2 pWAIC from the corresponding WAIC value.
+
+> "For all models except the top-ranked one we also get a triangle indicating the value of the difference of WAIC [LOO] between that model and the top model and a grey errobar indicating the standard error of the differences between the top-ranked WAIC [LOO] and WAIC [LOO] for each model."
+

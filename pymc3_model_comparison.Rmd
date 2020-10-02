@@ -1,0 +1,245 @@
+---
+title: "PyMC3 Model Comparison"
+author: "Michael L. Thompson"
+date: "9/27/2020"
+output: 
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+    extra_dependencies: ["float"]
+linkcolor: red
+urlcolor: blue
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  #warning = FALSE,
+  message = FALSE,
+  fig.pos = "!H", 
+  out.extra = ""
+)
+```
+
+## Package Setup
+
+We need package `reticulate` to make all of this happen.
+
+```{r pkgs}
+library(magrittr)
+library(tidyverse)
+library(reticulate)
+
+use_condaenv("./python",required = TRUE)
+py_config()
+# matplotlib <- import("matplotlib")
+# matplotlib$use("cairo", force = TRUE)
+
+```
+
+## Using Python within an R Project in RStudio
+
+Had to install the development version of R package `reticulate`, per instructions here: ["error when using reticulate in Rmarkdown #831"](https://github.com/rstudio/reticulate/issues/831).
+
+* ["Installing and Configuring Python with RStudio"](https://support.rstudio.com/hc/en-us/articles/360023654474-Installing-and-Configuring-Python-with-RStudio)
+
+Executed these commands wthin RStudio Terminal (after installing Miniconda3 outside of RStudio):
+
+* `~/Documents/R/python_test$ conda create --prefix ./python`    
+* `~/Documents/R/python_test$ conda activate ./python`    
+* `~/Documents/R/python_test$ conda install arviz matplotlib numpy pandas pymc3`
+
+## R Markdown and Python
+
+* `reticulate` vignette: ["R Markdown Python Engine"](https://rstudio.github.io/reticulate/articles/r_markdown.html)
+
+## Getting Started with **PyMC3** within Python
+
+* ["Getting started with PyMC3"](https://docs.pymc.io/notebooks/getting_started.html)    
+    + Be sure to run a `bash` session within the RStudio Terminal pane.    
+    
+
+
+```{python,eval=FALSE,include=FALSE}
+from IPython.display import set_matplotlib_formats
+set_matplotlib_formats('retina')
+```
+
+```{python eval=FALSE,include=FALSE}
+%config InlineBackend.figure_format = 'retina'
+```
+
+
+## Model Comparison
+
+```{python pymc3_imports}
+import arviz as az
+import matplotlib.pyplot as plt
+import numpy as np
+import pymc3 as pm
+
+print("Running on PyMC3 v{}".format(pm.__version__))
+```
+
+
+From PyMC3 Examples ["Model comparison"](https://docs.pymc.io/notebooks/model_comparison.html).
+
+```{python}
+J = 8
+y = np.array([28,  8, -3,  7, -1,  1, 18, 12])
+sigma = np.array([15, 10, 16, 11,  9, 11, 10, 18])
+```
+
+## Pooled Model
+
+```{python}
+with pm.Model() as pooled:
+    mu = pm.Normal('mu', 0, sigma=1e6)
+
+    obs = pm.Normal('obs', mu, sigma=sigma, observed=y)
+
+    trace_p = pm.sample(1000)
+```
+
+
+```{python pymc3_postviz1,results='hide'}
+axes = az.plot_trace(trace_p) #;
+fig = axes.ravel()[0].figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('pooled_trace.png', bbox_inches='tight')
+# add this line to markdown text: ![Trace plots.](pooled_trace.png)
+```
+
+![Trace plots.](pooled_trace.png)
+
+## Hierarchical Model
+
+```{python}
+with pm.Model() as hierarchical:
+
+    eta = pm.Normal('eta', 0, 1, shape=J)
+    mu = pm.Normal('mu', 0, sigma=1e6)
+    tau = pm.HalfCauchy('tau', 5)
+
+    theta = pm.Deterministic('theta', mu + tau*eta)
+
+    obs = pm.Normal('obs', theta, sigma=sigma, observed=y)
+
+    trace_h = pm.sample(1000)
+```
+
+```{python pymc3_postviz2,results='hide'}
+axes = az.plot_trace(trace_h,var_names='mu') #;
+fig = axes.ravel()[0].figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('hier_trace.png', bbox_inches='tight')
+# add this line to markdown text: ![Trace plots.](hier_trace.png)
+```
+
+![Trace plots.](hier_trace.png)
+
+
+```{python pymc3_postviz3,results='hide'}
+axes = pm.forestplot(trace_h, var_names=['theta']) #;
+fig = axes.ravel()[0].figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('hier_forest.png', bbox_inches='tight')
+```
+
+![Forest plots.](hier_forest.png)
+
+## WAIC
+
+```{python}
+pooled_waic = pm.waic(trace_p, pooled)
+
+pooled_waic
+```
+
+```{python}
+hierarchical_waic = pm.waic(trace_h, hierarchical)
+
+hierarchical_waic
+```
+
+```{python}
+hierarchical.name = 'hierarchical'
+pooled.name = 'pooled'
+```
+
+```{python}
+df_comp_WAIC = pm.compare({'hierarchical': trace_h, 'pooled': trace_p})
+#df_comp_WAIC
+```
+
+```{r}
+pymc3_df_comp_WAIC <- py_run_string("df_comp_WAIC") %>%
+  py_to_r() %$% df_comp_WAIC %>%
+  py_to_r() %>%
+  as_tibble() %>% 
+  unnest(cols= -waic_scale)
+pymc3_df_comp_WAIC
+```
+
+
+
+```{python}
+axes = pm.compareplot(df_comp_WAIC);
+fig = axes.figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('df_comp_WAIC.png', bbox_inches='tight')
+```
+
+![Model Comparison: WAIC.](df_comp_WAIC.png)
+
+
+## LOO
+
+```{python}
+pooled_loo = pm.loo(trace_p, pooled)
+
+pooled_loo
+```
+
+```{python}
+hierarchical_loo = pm.loo(trace_h, hierarchical)
+
+hierarchical_loo
+```
+
+```{python}
+df_comp_LOO = pm.compare({'hierarchical': trace_h, 'pooled': trace_p}, ic = 'LOO')
+#df_comp_LOO
+```
+
+```{r}
+pymc3_df_comp_LOO <- py_run_string("df_comp_LOO") %>%
+  py_to_r() %$% df_comp_LOO %>%
+  py_to_r() %>%
+  as_tibble() %>% 
+  unnest(cols= -loo_scale)
+pymc3_df_comp_LOO
+```
+
+
+
+```{python}
+axes = pm.compareplot(df_comp_LOO);
+fig = axes.figure
+```
+
+```{python,eval=TRUE,include=FALSE}
+fig.savefig('df_comp_LOO.png', bbox_inches='tight')
+```
+
+![Model Comparison: LOO.](df_comp_LOO.png)
