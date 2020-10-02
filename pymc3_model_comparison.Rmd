@@ -96,13 +96,16 @@ sigma = np.array([15, 10, 16, 11,  9, 11, 10, 18])
 
 ```{python}
 with pm.Model() as pooled:
-    mu = pm.Normal('mu', 0, sigma=1e6)
+    mu = pm.Normal('mu', 0, sigma=50.0)
 
     obs = pm.Normal('obs', mu, sigma=sigma, observed=y)
 
-    trace_p = pm.sample(1000)
+    trace_p = pm.sample(3000,chains=3)
 ```
 
+```{python}
+az.summary(trace_p, round_to=2)
+```
 
 ```{python pymc3_postviz1,results='hide'}
 axes = az.plot_trace(trace_p) #;
@@ -122,14 +125,18 @@ fig.savefig('pooled_trace.png', bbox_inches='tight')
 with pm.Model() as hierarchical:
 
     eta = pm.Normal('eta', 0, 1, shape=J)
-    mu = pm.Normal('mu', 0, sigma=1e6)
+    mu = pm.Normal('mu', 0, sigma=50)
     tau = pm.HalfCauchy('tau', 5)
 
     theta = pm.Deterministic('theta', mu + tau*eta)
 
     obs = pm.Normal('obs', theta, sigma=sigma, observed=y)
 
-    trace_h = pm.sample(1000)
+    trace_h = pm.sample(3000,chains=3,target_accept=0.9)
+```
+
+```{python}
+az.summary(trace_h, round_to=2)
 ```
 
 ```{python pymc3_postviz2,results='hide'}
@@ -184,7 +191,7 @@ df_comp_WAIC = pm.compare({'hierarchical': trace_h, 'pooled': trace_p})
 pymc3_df_comp_WAIC <- py_run_string("df_comp_WAIC") %>%
   py_to_r() %$% df_comp_WAIC %>%
   py_to_r() %>%
-  as_tibble() %>% 
+  as_tibble(rownames = "model") %>% 
   unnest(cols= -waic_scale)
 pymc3_df_comp_WAIC
 ```
@@ -226,7 +233,7 @@ df_comp_LOO = pm.compare({'hierarchical': trace_h, 'pooled': trace_p}, ic = 'LOO
 pymc3_df_comp_LOO <- py_run_string("df_comp_LOO") %>%
   py_to_r() %$% df_comp_LOO %>%
   py_to_r() %>%
-  as_tibble() %>% 
+  as_tibble(rownames = "model") %>% 
   unnest(cols= -loo_scale)
 pymc3_df_comp_LOO
 ```
@@ -243,3 +250,4 @@ fig.savefig('df_comp_LOO.png', bbox_inches='tight')
 ```
 
 ![Model Comparison: LOO.](df_comp_LOO.png)
+
